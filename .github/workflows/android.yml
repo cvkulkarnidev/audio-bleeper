@@ -34,10 +34,19 @@ jobs:
           mkdir -p app/src/main/assets
           unzip -q /tmp/vosk-model.zip -d app/src/main/assets
           test -d app/src/main/assets/vosk-model-small-en-us-0.15/am
+      - name: Generate reproducible spoken examples
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq espeak ffmpeg
+          python3 scripts/make_examples.py
+      - name: Exercise Vosk on actual audio and print recognized words
+        run: |
+          python3 -m pip install --quiet vosk==0.3.45
+          python3 scripts/check_asr_examples.py
       - run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: audio-bleeper-v0.2-debug-apk
+          name: audio-bleeper-v0.2-examples-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
