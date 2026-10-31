@@ -54,7 +54,7 @@ jobs:
           path: asr-regression-report.json
           if-no-files-found: warn
           retention-days: 30
-      - run: gradle --no-daemon :app:assembleDebug
+      - run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: audio-bleeper-v0.2.1-verified-examples-apk
