@@ -591,23 +591,12 @@ public class MainActivity extends Activity {
             }
         }
 
-        // Match both single words and multi-word custom phrases in the
-        // recognized word sequence, preserving the first/last word timestamps.
+        // Exact-sequence matching avoids false substring matches.
         for (WordEntry blocked : words) {
             if (!blocked.enabled) continue;
-            String[] phrase = blocked.text.trim().toLowerCase(Locale.ROOT).split("\\s+");
-            for (int i = 0; i + phrase.length <= detectedWords.size(); i++) {
-                boolean equal = true;
-                for (int j = 0; j < phrase.length; j++) {
-                    if (!phrase[j].equals(detectedWords.get(i + j).text)) {
-                        equal = false; break;
-                    }
-                }
-                if (equal) {
-                    long start = detectedWords.get(i).startMs;
-                    long end = detectedWords.get(i + phrase.length - 1).endMs;
-                    all.add(new Segment(Math.max(0, start - 100), end + 130));
-                }
+            for (WordMatcher.Interval interval :
+                    WordMatcher.find(detectedWords, blocked.text, 100, 130)) {
+                all.add(new Segment(interval.startMs, interval.endMs));
             }
         }
         all.sort(Comparator.comparingLong(s -> s.start));
