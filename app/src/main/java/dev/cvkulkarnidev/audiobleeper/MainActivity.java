@@ -28,6 +28,8 @@ import android.text.InputType;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -51,12 +53,16 @@ public class MainActivity extends Activity {
     private VideoView video;
     private MediaPlayer player;
     private ToneGenerator tone;
-    private TextView status, summary, position, wordCount;
+    private TextView status, summary, position, wordCount, diagnostics;
     private LinearLayout wordContainer;
     private SeekBar seek;
     private Button playButton, wordToggle, modeButton, analyzeButton;
     private Uri selectedMedia;
     private volatile boolean analyzing;
+    private boolean autoAnalyze;
+    private String activeExample;
+    private String exampleSentence = "";
+    private String[] expectedExample = new String[0];
     private boolean ready, beeping, showWords, entireCue;
 
     private static class WordEntry {
@@ -154,6 +160,23 @@ public class MainActivity extends Activity {
         root.addView(label("Your words. Your rules. Your listening.", 14, MUTED, false));
         space(root, 20);
 
+        LinearLayout demo = card(root, "00  Test lab — built-in examples",
+                "These four spoken samples are generated reproducibly in GitHub Actions and bundled in the APK. Pick one to load and analyze automatically.");
+        demo.addView(button("A  Clean speech · expect zero bleeps", 0xFF30435B, () -> loadExample("clean")),
+                new LinearLayout.LayoutParams(-1, dp(47)));
+        space(demo, 7);
+        demo.addView(button("B  Mild words · select Strict preset", 0xFF30435B, () -> loadExample("mild")),
+                new LinearLayout.LayoutParams(-1, dp(47)));
+        space(demo, 7);
+        demo.addView(button("C  Moderate profanity · Balanced preset", 0xFF30435B, () -> loadExample("moderate")),
+                new LinearLayout.LayoutParams(-1, dp(47)));
+        space(demo, 7);
+        demo.addView(button("D  Custom phrase · add purple robot", 0xFF30435B, () -> loadExample("custom")),
+                new LinearLayout.LayoutParams(-1, dp(47)));
+        space(demo, 10);
+        diagnostics = label("Select an example to view its expected result and recognized transcript.", 12, MUTED, false);
+        demo.addView(diagnostics);
+
         LinearLayout media = card(root, "01  Listen & censor",
                 "Choose local audio/video. The app runs without internet permission.");
         media.addView(button("Choose audio / video", ACCENT, this::chooseMedia),
@@ -167,6 +190,7 @@ public class MainActivity extends Activity {
             playButton.setText("Play");
             position.setText("00:00 / " + clock(video.getDuration()));
             resetOutput(); setStatus("Media ready. Press Play.");
+            if (autoAnalyze) { autoAnalyze = false; analyzeMedia(); }
         });
         video.setOnCompletionListener(mp -> {
             playButton.setText("Play"); resetOutput(); setStatus("Playback finished.");
@@ -311,6 +335,7 @@ public class MainActivity extends Activity {
                     detectedWords.clear();
                     detectedWords.addAll(result);
                     rebuild();
+                    updateDiagnostics();
                     setStatus("AI analyzed " + result.size() + " recognized words. "
                             + "Check playback: missed speech and inaccurate timings are possible.");
                 });
@@ -324,6 +349,84 @@ public class MainActivity extends Activity {
                 });
             }
         }, "offline-vosk-analysis").start();
+    }
+
+
+    /** Load a reproducible demo audio file from bundled assets and scan it. */
+    private void loadExample(String id) {
+        String title, sentence;
+        String[] expected;
+        switch (id) {
+            case "clean":
+                title = "Clean control"; sentence = "The morning sun is shining. Please enjoy this quiet clean example.";
+                expected = new String[0]; break;
+            case "mild":
+                title = "Mild profanity"; sentence = "What the hell is happening? Damn, this is really strange.";
+                expected = new String[]{"hell", "damn"}; break;
+            case "moderate":
+                title = "Moderate profanity"; sentence = "This is bullshit. Stop that crap right now.";
+                expected = new String[]{"bullshit", "crap"}; break;
+            case "custom":
+                title = "Custom phrase"; sentence = "The purple robot is speaking. The purple robot is moving.";
+                expected = new String[]{"purple robot", "purple robot"}; break;
+            default: return;
+        }
+        try {
+            File audio = new File(getCacheDir(), "example-" + id + ".wav");
+            try (InputStream in = getAssets().open("examples/" + id + ".wav");
+                 FileOutputStream out = new FileOutputStream(audio)) {
+                byte[] buffer = new byte[8192];
+                int n; while ((n = in.read(buffer)) >= 0) out.write(buffer, 0, n);
+            }
+            activeExample = id;
+            exampleSentence = sentence;
+            expectedExample = expected;
+            autoAnalyze = true;
+            selectedMedia = Uri.fromFile(audio);
+            captions.clear(); detectedWords.clear(); manual.clear();
+            player = null; ready = false;
+            resetOutput();
+            playButton.setText("Play");
+            video.setVideoURI(selectedMedia);
+            video.requestFocus();
+            updateDiagnostics();
+            setStatus(title + " loaded — preparing to run offline AI recognition.");
+        } catch (Exception e) {
+            autoAnalyze = false;
+            setStatus("Example unavailable: " + e.getMessage());
+        }
+    }
+
+    private void updateDiagnostics() {
+        if (diagnostics == null) return;
+        if (activeExample == null) {
+            diagnostics.setText("Built-in tests include a clean control, two profanity examples and a custom phrase.");
+            return;
+        }
+        StringBuilder message = new StringBuilder();
+        message.append("Source: ").append(exampleSentence).append("\n");
+        if ("mild".equals(activeExample)) message.append("Use Strict preset for 'hell' and 'damn'.\n");
+        if ("custom".equals(activeExample)) message.append("Add 'purple robot' to your word list and enable it.\n");
+        if (detectedWords.isEmpty()) {
+            message.append("Expected: ");
+            message.append(expectedExample.length == 0 ? "zero bleeps" : String.join(", ", expectedExample));
+            message.append("\nAI transcript: not analyzed yet.");
+        } else {
+            StringBuilder recognized = new StringBuilder();
+            for (OfflineAnalyzer.Word word : detectedWords) {
+                if (recognized.length() > 0) recognized.append(' ');
+                recognized.append(word.text);
+            }
+            int found = 0;
+            String transcript = recognized.toString();
+            for (String target : expectedExample) if (transcript.contains(target)) found++;
+            message.append("Recognized: ").append(transcript).append("\n")
+                    .append("Exact expected phrase matches: ").append(found)
+                    .append(" / ").append(expectedExample.length).append("\n")
+                    .append("Generated censor intervals: ").append(segments.size())
+                    .append(" (also depends on your selected word rules)");
+        }
+        diagnostics.setText(message);
     }
 
     private void chooseMedia() {
@@ -345,6 +448,11 @@ public class MainActivity extends Activity {
         catch (SecurityException ignored) {}
         if (request == PICK_MEDIA) {
             selectedMedia = uri;
+            activeExample = null;
+            exampleSentence = "";
+            expectedExample = new String[0];
+            autoAnalyze = false;
+            updateDiagnostics();
             captions.clear(); detectedWords.clear(); manual.clear();
             rebuild();
             resetOutput(); player = null; ready = false;
@@ -468,6 +576,7 @@ public class MainActivity extends Activity {
         }
         if (summary != null)
             summary.setText(captions.size() + " captions · " + detectedWords.size() + " AI words · " + segments.size() + " bleep intervals");
+        if (diagnostics != null && activeExample != null && !detectedWords.isEmpty()) updateDiagnostics();
         if (wordCount != null) {
             int count = 0; for (WordEntry w : words) if (w.enabled) count++;
             wordCount.setText(count + " enabled / " + words.size() + " words");
