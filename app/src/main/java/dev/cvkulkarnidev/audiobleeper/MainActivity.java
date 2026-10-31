@@ -33,6 +33,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Locale;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -42,6 +43,7 @@ public class MainActivity extends Activity {
     private static final int MUTED = 0xFFA7B8CE, ACCENT = 0xFF44D6AA;
     private final ArrayList<WordEntry> words = new ArrayList<>();
     private final ArrayList<Caption> captions = new ArrayList<>();
+    private final ArrayList<OfflineAnalyzer.Word> detectedWords = new ArrayList<>();
     private final ArrayList<Segment> manual = new ArrayList<>();
     private final ArrayList<Segment> segments = new ArrayList<>();
     private final Handler timer = new Handler(Looper.getMainLooper());
@@ -52,7 +54,9 @@ public class MainActivity extends Activity {
     private TextView status, summary, position, wordCount;
     private LinearLayout wordContainer;
     private SeekBar seek;
-    private Button playButton, wordToggle, modeButton;
+    private Button playButton, wordToggle, modeButton, analyzeButton;
+    private Uri selectedMedia;
+    private volatile boolean analyzing;
     private boolean ready, beeping, showWords, entireCue;
 
     private static class WordEntry {
@@ -205,6 +209,11 @@ public class MainActivity extends Activity {
                 "Import matching SRT subtitles to automatically censor their blocked words.");
         captionsCard.addView(button("Load SRT subtitles", ACCENT, this::chooseSrt),
                 new LinearLayout.LayoutParams(-1, dp(46)));
+        space(captionsCard, 10);
+        analyzeButton = button("Analyze spoken words offline (AI)", ACCENT, this::analyzeMedia);
+        captionsCard.addView(analyzeButton, new LinearLayout.LayoutParams(-1, dp(46)));
+        space(captionsCard, 9);
+        captionsCard.addView(label("Requires a selected file. First analysis unpacks the bundled ~40 MB English model. Detection is not guaranteed for every accent or swear word.", 12, MUTED, false));
         space(captionsCard, 11);
         modeButton = button(entireCue ? "Mode: Full caption (safer)" : "Mode: Estimated word timing",
                 0xFF30435B, () -> {
@@ -267,6 +276,56 @@ public class MainActivity extends Activity {
         setStatus("Select a media file to begin.");
     }
 
+
+    /**
+     * v0.2: one-time, on-device media scan, BEFORE playback.
+     * Vosk returns timestamps for recognized words; subsequent playback uses
+     * these timestamps to mute/bleep. This is not live streaming ASR.
+     */
+    private void analyzeMedia() {
+        if (selectedMedia == null || !ready) {
+            setStatus("Select a playable media file before analyzing.");
+            return;
+        }
+        if (analyzing) return;
+        if (video.isPlaying()) {
+            video.pause();
+            playButton.setText("Play");
+            resetOutput();
+        }
+        final Uri source = selectedMedia;
+        analyzing = true;
+        analyzeButton.setEnabled(false);
+        setStatus("Preparing offline speech analysis...");
+        new Thread(() -> {
+            try {
+                List<OfflineAnalyzer.Word> result = OfflineAnalyzer.analyze(
+                        getApplicationContext(), source,
+                        msg -> runOnUiThread(() -> {
+                            if (source.equals(selectedMedia)) setStatus(msg);
+                        }));
+                runOnUiThread(() -> {
+                    analyzing = false;
+                    analyzeButton.setEnabled(true);
+                    if (!source.equals(selectedMedia)) return;
+                    detectedWords.clear();
+                    detectedWords.addAll(result);
+                    rebuild();
+                    setStatus("AI analyzed " + result.size() + " recognized words. "
+                            + "Check playback: missed speech and inaccurate timings are possible.");
+                });
+            } catch (Throwable ex) {
+                runOnUiThread(() -> {
+                    analyzing = false;
+                    analyzeButton.setEnabled(true);
+                    if (source.equals(selectedMedia))
+                        setStatus("AI analysis failed: " + ex.getClass().getSimpleName()
+                                + " - " + String.valueOf(ex.getMessage()));
+                });
+            }
+        }, "offline-vosk-analysis").start();
+    }
+
     private void chooseMedia() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.setType("*/*"); intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -285,6 +344,9 @@ public class MainActivity extends Activity {
         try { getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
         catch (SecurityException ignored) {}
         if (request == PICK_MEDIA) {
+            selectedMedia = uri;
+            captions.clear(); detectedWords.clear(); manual.clear();
+            rebuild();
             resetOutput(); player = null; ready = false;
             playButton.setText("Play");
             video.setVideoURI(uri); video.requestFocus(); setStatus("Loading media...");
@@ -374,6 +436,26 @@ public class MainActivity extends Activity {
                 }
             }
         }
+
+        // Match both single words and multi-word custom phrases in the
+        // recognized word sequence, preserving the first/last word timestamps.
+        for (WordEntry blocked : words) {
+            if (!blocked.enabled) continue;
+            String[] phrase = blocked.text.trim().toLowerCase(Locale.ROOT).split("\\s+");
+            for (int i = 0; i + phrase.length <= detectedWords.size(); i++) {
+                boolean equal = true;
+                for (int j = 0; j < phrase.length; j++) {
+                    if (!phrase[j].equals(detectedWords.get(i + j).text)) {
+                        equal = false; break;
+                    }
+                }
+                if (equal) {
+                    long start = detectedWords.get(i).startMs;
+                    long end = detectedWords.get(i + phrase.length - 1).endMs;
+                    all.add(new Segment(Math.max(0, start - 100), end + 130));
+                }
+            }
+        }
         all.sort(Comparator.comparingLong(s -> s.start));
         segments.clear();
         for (Segment s : all) {
@@ -385,7 +467,7 @@ public class MainActivity extends Activity {
             }
         }
         if (summary != null)
-            summary.setText(captions.size() + " subtitle cues  ·  " + segments.size() + " bleep intervals");
+            summary.setText(captions.size() + " captions · " + detectedWords.size() + " AI words · " + segments.size() + " bleep intervals");
         if (wordCount != null) {
             int count = 0; for (WordEntry w : words) if (w.enabled) count++;
             wordCount.setText(count + " enabled / " + words.size() + " words");
