@@ -26,10 +26,18 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Bundle offline English speech model (Apache 2.0)
+        run: |
+          curl --fail --location --retry 3 --connect-timeout 30 --max-time 300 \
+            "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip" \
+            --output /tmp/vosk-model.zip
+          mkdir -p app/src/main/assets
+          unzip -q /tmp/vosk-model.zip -d app/src/main/assets
+          test -d app/src/main/assets/vosk-model-small-en-us-0.15/am
       - run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: audio-bleeper-v0.1-debug-apk
+          name: audio-bleeper-v0.2-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
