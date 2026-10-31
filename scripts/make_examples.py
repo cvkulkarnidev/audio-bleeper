@@ -4,6 +4,7 @@ Speech is synthetic on purpose: same examples for every APK build.
 """
 import json
 import subprocess
+import wave
 from pathlib import Path
 
 EXAMPLES = [
@@ -24,6 +25,18 @@ def main():
         subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(source),
                         "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", str(output)], check=True)
         source.unlink()
+        with wave.open(str(output), "rb") as audio:
+            duration_ms = round(audio.getnframes() * 1000 / audio.getframerate())
+        hours, remain = divmod(duration_ms, 3600000)
+        minutes, remain = divmod(remain, 60000)
+        seconds, milliseconds = divmod(remain, 1000)
+        end = f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
+        # Whole-clip SRT fallback deliberately tests the subtitle engine rather
+        # than pretending to provide speech-aligned timestamps.
+        (target / (item["id"] + ".srt")).write_text(
+            "1\n00:00:00,000 --> " + end + "\n" + item["text"] + "\n",
+            encoding="utf-8",
+        )
         print(f"{item['id']}: {output.stat().st_size} bytes - {item['text']}")
     print(f"Generated {len(EXAMPLES)} reproducible examples")
 
