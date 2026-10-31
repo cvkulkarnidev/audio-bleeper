@@ -417,14 +417,26 @@ public class MainActivity extends Activity {
                 if (recognized.length() > 0) recognized.append(' ');
                 recognized.append(word.text);
             }
-            int found = 0;
             String transcript = recognized.toString();
-            for (String target : expectedExample) if (transcript.contains(target)) found++;
-            message.append("Recognized: ").append(transcript).append("\n")
-                    .append("Exact expected phrase matches: ").append(found)
-                    .append(" / ").append(expectedExample.length).append("\n")
-                    .append("Generated censor intervals: ").append(segments.size())
-                    .append(" (also depends on your selected word rules)");
+            java.util.LinkedHashMap<String, Integer> wanted = new java.util.LinkedHashMap<>();
+            for (String target : expectedExample) {
+                wanted.put(target, wanted.getOrDefault(target, 0) + 1);
+            }
+            message.append("Recognized: ").append(transcript).append("\n");
+            if (wanted.isEmpty()) {
+                message.append("Expected: no profanity. Compare censor interval count to zero.\n");
+            } else {
+                for (java.util.Map.Entry<String, Integer> item : wanted.entrySet()) {
+                    Matcher hit = matches(transcript, item.getKey());
+                    int count = 0;
+                    while (hit.find()) count++;
+                    message.append("Heard '").append(item.getKey()).append("': ")
+                            .append(count).append(" / ").append(item.getValue())
+                            .append(" expected occurrences\n");
+                }
+            }
+            message.append("Generated censor intervals: ").append(segments.size())
+                    .append(" (depends on enabled rules, captions and manual marks)");
         }
         diagnostics.setText(message);
     }
