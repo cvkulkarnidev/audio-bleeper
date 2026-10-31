@@ -176,6 +176,11 @@ public class MainActivity extends Activity {
         space(demo, 10);
         diagnostics = label("Select an example to view its expected result and recognized transcript.", 12, MUTED, false);
         demo.addView(diagnostics);
+        space(demo, 10);
+        demo.addView(button("Compare: load matched SRT subtitles", 0xFF30435B, this::loadExampleCaptions),
+                new LinearLayout.LayoutParams(-1, dp(46)));
+        space(demo, 6);
+        demo.addView(label("Subtitle fallback covers the entire example clip when a blocked word occurs. It tests the bleep player independently of AI recognition.", 12, MUTED, false));
 
         LinearLayout media = card(root, "01  Listen & censor",
                 "Choose local audio/video. The app runs without internet permission.");
@@ -439,6 +444,35 @@ public class MainActivity extends Activity {
                     .append(" (depends on enabled rules, captions and manual marks)");
         }
         diagnostics.setText(message);
+    }
+
+
+    private void loadExampleCaptions() {
+        if (activeExample == null) {
+            setStatus("Select a built-in example first.");
+            return;
+        }
+        try {
+            String text;
+            try (InputStream in = getAssets().open("examples/" + activeExample + ".srt");
+                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                byte[] bytes = new byte[4096];
+                int n;
+                while ((n = in.read(bytes)) != -1) out.write(bytes, 0, n);
+                text = out.toString(StandardCharsets.UTF_8.name());
+            }
+            ArrayList<Caption> parsed = parseSrt(text);
+            if (parsed.isEmpty()) throw new IllegalArgumentException("No SRT caption");
+            captions.clear();
+            captions.addAll(parsed);
+            entireCue = true;
+            modeButton.setText("Mode: Full caption (safer)");
+            prefs.edit().putBoolean("entire_cue", true).apply();
+            rebuild();
+            setStatus("Loaded the full-caption SRT test. This tests bleep playback, not word alignment.");
+        } catch (Exception e) {
+            setStatus("SRT example could not be loaded: " + e.getMessage());
+        }
     }
 
     private void chooseMedia() {
