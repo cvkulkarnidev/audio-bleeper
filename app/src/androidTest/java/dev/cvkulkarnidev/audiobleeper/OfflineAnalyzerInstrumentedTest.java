@@ -41,4 +41,23 @@ public class OfflineAnalyzerInstrumentedTest {
             lastStart = word.startMs;
         }
     }
+
+    @Test public void phraseMatchingUsesExactWordsAndTimestamps() {
+        java.util.ArrayList<OfflineAnalyzer.Word> transcript = new java.util.ArrayList<>();
+        transcript.add(new OfflineAnalyzer.Word(100, 250, "class"));
+        transcript.add(new OfflineAnalyzer.Word(300, 480, "purple"));
+        transcript.add(new OfflineAnalyzer.Word(480, 720, "robot"));
+        transcript.add(new OfflineAnalyzer.Word(800, 1000, "purple"));
+        transcript.add(new OfflineAnalyzer.Word(1020, 1290, "robot"));
+        assertEquals("No substring false positives", 0,
+                WordMatcher.find(transcript, "ass", 100, 100).size());
+        java.util.List<WordMatcher.Interval> two =
+                WordMatcher.find(transcript, "purple robot", 100, 130);
+        assertEquals("Must find both occurrences", 2, two.size());
+        assertEquals(200L, two.get(0).startMs);
+        assertEquals(850L, two.get(0).endMs);
+        assertEquals(700L, two.get(1).startMs);
+        assertEquals(1420L, two.get(1).endMs);
+        assertEquals(0, WordMatcher.find(transcript, "robot purple new", 0, 0).size());
+    }
 }
