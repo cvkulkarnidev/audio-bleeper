@@ -46,6 +46,14 @@ jobs:
         run: |
           python3 -m pip install --quiet vosk==0.3.45
           python3 scripts/check_asr_examples.py
+      - name: Upload ASR regression results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: speech-recognition-test-report
+          path: asr-regression-report.json
+          if-no-files-found: warn
+          retention-days: 30
       - run: gradle --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
